@@ -1,0 +1,95 @@
+sequenceDiagram
+    autonumber
+    actor User as 用户
+    participant Client as Client 端
+    participant Cloud as Cloud 服务端<br/>订阅事实中心
+    participant CloudDB as Cloud PostgreSQL
+    participant Toolbox as Toolbox 工具箱<br/>监听镜像与过滤
+    participant ToolboxMongo as Toolbox Mongo<br/>完整上传数据
+    participant ToolboxRedis as Toolbox Redis<br/>监听镜像与过滤暂存
+    participant HMES as HMES 服务<br/>SSE 更新通知
+    participant Drawing as Drawing 画图服务
+
+    Note over User,Toolbox: 1. 创建或更新生日材料监听
+    User->>Client: 群内发送监听命令
+    Client->>Cloud: POST /api/v2/bot/:botId/pjsk/mysekai/birthday-monitor<br/>platform_user_id, platform_group_id, self_id, message, notify_empty
+    Cloud->>CloudDB: 校验账号归属、验证状态、群聊和 self_id<br/>生成 subscription_version 与 SSE token<br/>准备 upsert subscription(region + uid 唯一)
+    Cloud->>Toolbox: PUT /internal/mysekai-birthday-monitors/:subscription_id<br/>region, uid, materials, expires_at, notify_empty, subscription_version
+    alt Toolbox 同步失败
+        Toolbox-->>Cloud: 返回失败
+        Cloud->>CloudDB: 回滚或标记本次订阅 inactive<br/>不启用旧 token 与 version
+        Cloud-->>Client: 返回订阅失败，请稍后重试
+    else Toolbox 同步成功
+        Toolbox->>ToolboxRedis: 保存短期监听镜像<br/>清理旧 subscription_version 的暂存 payload
+        Toolbox-->>Cloud: 监听镜像已更新
+        Cloud->>CloudDB: 提交 active subscription<br/>使 subscription_version 与 SSE token 生效
+        Cloud-->>Client: 返回订阅成功消息与 hmes_sse action<br/>subscription_id, subscription_version, endpoint, token, expires_at
+        Client->>HMES: GET /sse?subscription_id=...&subscription_version=...&token=...<br/>Accept: text/event-stream
+        HMES->>Cloud: GET /internal/subscriptions/mysekai-birthday/validate<br/>subscription_id, subscription_version, token
+        Cloud-->>HMES: valid, expires_at
+        HMES->>HMES: 检查 latest pending event<br/>同 subscription_id + subscription_version 只保留最新一条
+        HMES-->>Client: SSE connected<br/>如存在 pending event 则立即投递
+    end
+
+    Note over Toolbox,HMES: 2. Toolbox 上传成功后异步过滤
+    Toolbox->>ToolboxMongo: 正常写入完整 mysekai_birthday_party 数据
+    Toolbox->>ToolboxRedis: 异步按 region + uid 查本地监听镜像
+    alt 没有活跃监听或监听已过期
+        Toolbox->>Toolbox: 结束额外流程
+    else 存在活跃监听
+        Toolbox->>Toolbox: 过滤 updatedResources.userMysekaiHarvestMaps<br/>只保留命中材料 drop 与同位置 harvest fixture
+        alt 过滤后地图为空且 notify_empty=false
+            Toolbox->>Toolbox: 不创建事件，不通知 HMES
+        else 过滤后地图为空且 notify_empty=true
+            Toolbox->>ToolboxRedis: 暂存轻量 empty event<br/>empty_result=true
+            Toolbox->>HMES: POST /internal/events<br/>subscription_id, subscription_version, event_id, empty_result=true
+            alt Client SSE 在线
+                HMES-->>Client: SSE event: birthday_monitor_update<br/>empty_result=true
+            else Client SSE 断线
+                HMES->>HMES: 保存为 latest pending event<br/>覆盖同 subscription_id + version 的旧 event
+            end
+        else 命中订阅材料
+            Toolbox->>ToolboxRedis: 暂存 filtered_payload，生成 event_id/payload_ref<br/>TTL 不短于订阅有效期加清理宽限
+            Toolbox->>HMES: POST /internal/events<br/>subscription_id, subscription_version, event_id, payload_ref, empty_result=false
+            alt Client SSE 在线
+                HMES-->>Client: SSE event: birthday_monitor_update<br/>event_id, subscription_id, subscription_version, empty_result=false
+            else Client SSE 断线
+                HMES->>HMES: 保存为 latest pending event<br/>覆盖同 subscription_id + version 的旧 event
+            end
+        end
+    end
+
+    Note over Client,Drawing: 3. Client 收到更新后取图并 ACK
+    alt empty_result=true
+        Client->>User: 按 Client 配置可选发送无材料提示<br/>不触发画图
+        Client->>Cloud: POST /api/v2/bot/:botId/pjsk/mysekai/birthday-monitor/ack<br/>event_id, subscription_id, subscription_version, token
+        Cloud->>Toolbox: POST /internal/mysekai-birthday-events/:event_id/ack<br/>subscription_id, subscription_version
+        Toolbox->>ToolboxRedis: 清理或标记 empty event
+    else empty_result=false
+        Client->>Cloud: POST /api/v2/bot/:botId/pjsk/mysekai/birthday-monitor/render<br/>event_id, subscription_id, subscription_version, token, self_id
+        Cloud->>CloudDB: 校验订阅属于当前 bot、群、用户、self_id 和 version
+        Cloud->>Toolbox: GET /internal/mysekai-birthday-events/:event_id<br/>subscription_id, subscription_version
+        Toolbox->>ToolboxRedis: 读取 filtered_payload
+        Toolbox-->>Cloud: 返回过滤后的地图 payload
+        Cloud->>Drawing: POST /api/pjsk/mysekai/map<br/>复用现有 MySekai map 画图链路
+        Drawing-->>Cloud: 返回地图图片
+        Cloud-->>Client: 返回 OneBot image segments
+        Client->>User: 主动发送群消息并 at 订阅用户
+        Client->>Cloud: POST /api/v2/bot/:botId/pjsk/mysekai/birthday-monitor/ack<br/>event_id, subscription_id, subscription_version, token
+        Cloud->>Toolbox: POST /internal/mysekai-birthday-events/:event_id/ack<br/>subscription_id, subscription_version
+        Toolbox->>ToolboxRedis: 清理或标记 filtered_payload
+    end
+
+    Note over User,HMES: 4. 取消、覆盖与过期清理
+    User->>Client: 群内发送取消监听命令
+    Client->>Cloud: POST /api/v2/bot/:botId/pjsk/mysekai/birthday-monitor<br/>取消命令
+    Cloud->>CloudDB: 标记 subscription inactive/cancelled<br/>使旧 token 与 version 失效
+    Cloud->>Toolbox: DELETE /internal/mysekai-birthday-monitors/:subscription_id<br/>subscription_version
+    Toolbox->>ToolboxRedis: 删除监听镜像与该订阅暂存 payload
+    Cloud-->>Client: 返回取消成功消息
+    opt 主动关闭在线连接
+        Cloud->>HMES: POST /internal/subscriptions/:subscription_id/close<br/>subscription_version
+        HMES-->>Client: 关闭对应 SSE 连接
+    end
+
+    Note over Cloud,Toolbox: Cloud 负责订阅事实、覆盖和过期扫描；Toolbox Redis 保存 Cloud 下发的短期监听镜像与 filtered_payload；HMES 只负责通知 Client，并在断线期间按 subscription_id + version 覆盖保留最新 event。

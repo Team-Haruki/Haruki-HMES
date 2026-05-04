@@ -32,38 +32,38 @@
 - [x] 无材料参数时默认监听钻石。
 - [x] 如果最终所有材料都关闭，返回错误。
 - [x] 创建或更新订阅后返回可见消息和 `client_actions`。
-- [x] 新增 Toolbox 查询活跃订阅的内部接口。
-- [x] 新增 Toolbox 写入过滤事件的内部接口。
+- [x] 新增 Cloud -> Toolbox 监听镜像同步接口。
+- [x] 新增 Toolbox Redis 暂存过滤事件与读取/ACK 内部接口。
 - [x] 新增 Client 请求绘图接口：根据 `event_id` 读取过滤 payload 并调用现有 Drawing 链路。
 - [x] 绘图接口校验 `event_id` 属于当前 Bot、群、用户和 `self_id`。
 - [x] 支持事件 ACK 或补推状态更新。
 
 ## 阶段 3：Toolbox
 
-- [x] 在 `mysekai_birthday_party` 上传成功后，best-effort 查询 Cloud 是否存在活跃订阅。
-- [x] Cloud 查询失败时仅记录日志，不影响上传成功。
-- [x] 没有活跃订阅时跳过过滤和推送。
-- [x] 有活跃订阅时，根据 Cloud 返回的材料 ID 过滤 `updatedResources.userMysekaiHarvestMaps`。
+- [x] 在 `mysekai_birthday_party` 上传成功后，从 Redis 查询 Cloud 下发的监听镜像。
+- [x] 没有活跃监听镜像时跳过过滤和推送。
+- [x] 有活跃监听镜像时，根据镜像材料 ID 过滤 `updatedResources.userMysekaiHarvestMaps`。
 - [x] 过滤规则：
   - 保留命中材料所在 map。
   - 保留命中材料 drop。
   - 保留同位置的 harvest fixture。
   - 删除其它非命中资源 drop。
-  - 全部过滤为空时仍然上报空结果事件。
-- [x] 将过滤后的事件写入 Cloud。
-- [x] Cloud 写入成功后通知 HMES 推送 `event_id`。
+  - 全部过滤为空且未开启 `notify_empty` 时不创建事件。
+- [x] 将过滤后的事件暂存到 Toolbox Redis。
+- [x] Toolbox 暂存成功后通知 HMES 推送 `event_id`。
 - [x] HMES 通知失败时仅记录日志，不影响上传成功。
 
 ## 阶段 4：HMES
 
-- [x] 实现 HTTP 长轮询服务。
-- [x] 实现 Client poll token 认证。
-- [x] 维护 `subscription_id -> waiter/queue` 的在线映射。
+- [x] 实现 SSE 推送服务。
+- [x] 实现 Client SSE token + subscription_version 认证。
+- [x] 维护 `subscription_id + subscription_version -> latest pending event` 的在线映射。
 - [x] 接收 Toolbox 或 Cloud 的事件通知。
 - [x] 向在线 Client 返回 `subscription_id`、`event_id`、`empty_result`。
 - [x] Client 断线后清理等待队列。
-- [x] HMES 重启后允许 Client 自动恢复长轮询。
-- [x] Client 重新 poll 时，从 Cloud 拉取未 ACK 事件并补推。
+- [x] 支持 Cloud 主动关闭指定 `subscription_id + subscription_version` 的 SSE 连接。
+- [x] HMES 重启后允许 Client 自动恢复 SSE。
+- [x] Client 重新连接时，补推断线期间 HMES 收到的最新事件。
 - [x] HMES 不持久化订阅数据，不依赖本地业务数据库启动。
 
 ## 阶段 5：Client
@@ -72,7 +72,7 @@
 - [x] 硬编码识别取消监听命令，不依赖 manifest。
 - [x] 调 Cloud 订阅接口时携带 `self_id`。
 - [x] 处理 Cloud 返回的 `client_actions`。
-- [x] 根据 `hmes_connect` action 建立或刷新 HTTP 长轮询。
+- [x] 根据 `hmes_sse` action 建立或刷新 SSE 连接。
 - [x] 支持 HMES 自动重连。
 - [x] 收到 `empty_result = true` 时，主动向订阅群 at 用户并发送：`本次生日材料更新未发现你订阅的材料。`
 - [x] 收到 `empty_result = false` 时，调用 Cloud 绘图接口并把返回的 OneBot segments 主动发到订阅群。
@@ -84,7 +84,11 @@
 - [ ] Cloud 订阅覆盖、过期、取消测试。
 - [ ] Cloud 权限校验测试：默认账号、`u[i]`、非本人账号、未验证账号。
 - [x] Toolbox 过滤规则单元测试。
-- [ ] Toolbox 在 Cloud/HMES 不可用时上传不失败的测试。
-- [x] HMES 长轮询鉴权和推送测试。
+- [ ] Toolbox 在 HMES 不可用时上传不失败的测试。
+- [x] HMES SSE 鉴权和推送测试。
 - [x] Client 特殊命令和 `client_actions` 测试。
 - [ ] 端到端测试：订阅 -> 上传 -> 过滤 -> 推送 -> 绘图 -> 群消息。
+
+## 后续优化
+
+- [ ] 评估并实施 HMES Rust 重写，保持现有 HTTP/SSE 接口和环境变量兼容。

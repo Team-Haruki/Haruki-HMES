@@ -2,7 +2,7 @@
 
 本项目用于处理 HarukiBot 的实时订阅消息。当前阶段只服务一个场景：烤森生日材料更新监听。
 
-HMES 被定位为外挂式轻量推送网关，而不是订阅业务的事实来源。HMES 停机时不能影响 Cloud、Toolbox、普通 Bot 指令、用户上传和绘图服务；最多导致订阅消息无法实时送达。订阅和事件数据应由 Cloud 持久化，HMES 只负责 Client 长轮询认证、在线等待队列和事件转发。
+HMES 被定位为外挂式轻量推送网关，而不是订阅业务的事实来源。HMES 停机时不能影响 Cloud、Toolbox、普通 Bot 指令、用户上传和绘图服务；最多导致订阅消息无法实时送达。订阅事实由 Cloud 负责，过滤后的短期事件 payload 由 Toolbox Redis 暂存，HMES 只负责 Client SSE 认证、在线连接和事件转发。
 
 ## 名词解释
 
@@ -31,9 +31,9 @@ HMES 被定位为外挂式轻量推送网关，而不是订阅业务的事实来
 
 ## 总体原则
 
-1. Cloud 是订阅状态和事件数据的唯一事实来源。
+1. Cloud 是订阅状态的唯一事实来源。
 2. HMES 不保存长期订阅，不拥有订阅数据库表。
-3. Toolbox 不保存订阅规则，但可以向 Cloud 查询是否需要处理当前上传。
+3. Toolbox 只保存 Cloud 下发的短期监听镜像和过滤 payload，不反向依赖 Cloud。
 4. Toolbox、Cloud、Client 对 HMES 的调用都必须是可降级的。HMES 不可用时，上传和普通 Bot 能力仍然成功。
 5. 订阅只支持群聊，不支持私聊。
 6. 每个 `region + uid` 同一时间只允许一个活跃订阅。新订阅覆盖旧订阅，只提示当前用户订阅已更新，不通知旧订阅方。
@@ -112,34 +112,32 @@ Cloud 必须在创建订阅时校验账号已验证，并解析最终的 `region
    - 至少开启一个材料。
 5. Cloud 在自己的订阅表中 upsert 订阅。唯一约束为活跃的 `region + uid`。
 6. Cloud 生成 HMES 连接认证信息，放入 `client_actions` 返回给 Client。
-7. Client 根据 `client_actions` 建立或刷新到 HMES 的 HTTP 长轮询。
+7. Client 根据 `client_actions` 建立或刷新到 HMES 的 SSE 连接。
 8. Client 向群内回复订阅成功或已更新。
 
 ### 2. Toolbox 上传并过滤
 
 1. 用户通过 Toolbox 上传 `mysekai_birthday_party` 数据。
 2. Toolbox 正常完成解包、校验和 Mongo 更新。
-3. Toolbox 以短超时、best-effort 的方式向 Cloud 查询当前 `region + uid` 是否存在活跃订阅。
-4. Cloud 返回 active subscription 及材料 ID。
-5. Toolbox 如果没有活跃订阅，直接结束额外流程。
-6. Toolbox 如果存在活跃订阅，对 `updatedResources.userMysekaiHarvestMaps` 进行过滤：
+3. Toolbox 从 Redis 读取 Cloud 下发的 `region + uid` 监听镜像。
+4. Toolbox 如果没有活跃监听镜像，直接结束额外流程。
+5. Toolbox 如果存在活跃监听镜像，对 `updatedResources.userMysekaiHarvestMaps` 进行过滤：
    - 保留命中材料所在 map。
    - 保留命中材料 drop。
    - 保留同位置的 harvest fixture，用于地图定位。
    - 删除其它非命中资源 drop。
-   - 如果全部过滤为空，也要继续上报空结果事件。
-7. Toolbox 将过滤后的 payload 写回 Cloud 的订阅事件 API。
-8. Cloud 持久化事件并返回 `event_id`。
-9. Toolbox 通知 HMES 推送该 `event_id`。HMES 不可用时只记录日志，不影响上传成功。
+   - 如果全部过滤为空且订阅未开启空结果通知，则不通知。
+6. Toolbox 将过滤后的 payload 暂存在 Redis，生成 `event_id` 和 `payload_ref`。
+7. Toolbox 通知 HMES 推送该 `event_id`。HMES 不可用时只记录日志，不影响上传成功。
 
 ### 3. HMES 推送和 Client 绘图
 
-1. HMES 收到事件通知后，根据 `subscription_id` 唤醒对应长轮询；如果当前没有等待中的 Client，则暂存在内存队列。
-2. Client 的下一次长轮询取得 `event_id`、`subscription_id`、`empty_result`。
+1. HMES 收到事件通知后，根据 `subscription_id + subscription_version` 推送 SSE；如果当前没有在线 Client，则只保留最新一条 pending event。
+2. Client 的 SSE 连接取得 `event_id`、`subscription_id`、`subscription_version`、`empty_result`。
 3. Client 收到事件后：
    - 如果 `empty_result = true`，直接向群内 at 用户并发送固定文案：`本次生日材料更新未发现你订阅的材料。`
    - 如果 `empty_result = false`，调用 Cloud 绘图 API。
-4. Cloud 根据 `event_id` 读取过滤后的 payload，使用现有 MySekai map renderer 和 Drawing 生成图片。
+4. Cloud 根据 `event_id + subscription_version` 从 Toolbox Redis 读取过滤后的 payload，使用现有 MySekai map renderer 和 Drawing 生成图片。
 5. Client 将 Cloud 返回的 OneBot segments 主动发送到订阅群，并 at 订阅用户。
 
 ### 4. HMES 停机与恢复
@@ -148,14 +146,14 @@ HMES 停机时：
 
 - Cloud 订阅仍然有效。
 - Toolbox 上传仍然成功。
-- Cloud 仍然可以保存订阅事件。
-- 实时长轮询推送不可用。
+- Toolbox 仍然可以暂存过滤事件。
+- 实时 SSE 推送不可用。
 
 HMES 恢复后：
 
-- Client 自动恢复长轮询并重新认证。
-- HMES 可向 Cloud 校验 token，并拉取该订阅未 ACK 的事件后补推。
-- Client 处理完成后向 Cloud ACK，由 Cloud 更新事件投递状态。
+- Client 自动恢复 SSE 并重新认证。
+- 如果 Client 断线期间 HMES 收到事件，HMES 会按 `subscription_id + subscription_version` 补推最新一条。
+- Client 处理完成后向 Cloud ACK，由 Cloud 转发到 Toolbox 删除暂存事件。
 
 ## 推荐接口
 
@@ -190,9 +188,10 @@ POST /api/v2/bot/:botId/pjsk/mysekai/birthday-monitor
   ],
   "client_actions": [
     {
-      "type": "hmes_connect",
+      "type": "hmes_sse",
       "subscription_id": "...",
-      "endpoint": "https://hmes.example.com/poll",
+      "subscription_version": "...",
+      "endpoint": "https://hmes.example.com/sse",
       "token": "...",
       "expires_at": 1770000000
     }
@@ -202,28 +201,10 @@ POST /api/v2/bot/:botId/pjsk/mysekai/birthday-monitor
 
 `client_actions` 只用于新版 Client，本命令不通过 manifest 下发。
 
-### Toolbox -> Cloud：查询是否需要过滤
+### Cloud -> Toolbox：同步监听镜像
 
 ```http
-GET /internal/subscriptions/mysekai-birthday/active?region=jp&uid=123456
-```
-
-响应：
-
-```json
-{
-  "active": true,
-  "subscription_id": "...",
-  "materials": ["diamond", "yuugiri", "clover"],
-  "material_ids": [12, 5, 20],
-  "notify_empty": true
-}
-```
-
-### Toolbox -> Cloud：写入过滤事件
-
-```http
-POST /internal/subscription-events/mysekai-birthday
+PUT /internal/mysekai-birthday-monitors/:subscription_id
 ```
 
 请求：
@@ -231,24 +212,40 @@ POST /internal/subscription-events/mysekai-birthday
 ```json
 {
   "subscription_id": "...",
+  "subscription_version": "...",
   "region": "jp",
   "uid": "123456",
-  "upload_time": 1770000000,
-  "matched_material_ids": [12],
-  "empty_result": false,
-  "filtered_payload": {
-    "updatedResources": {
-      "userMysekaiHarvestMaps": []
-    }
-  }
+  "materials": ["diamond", "yuugiri", "clover"],
+  "material_ids": [12, 5, 20],
+  "expires_at": 1770000000,
+  "notify_empty": false
 }
 ```
 
-响应：
+### Cloud -> Toolbox：取消监听镜像
+
+```http
+DELETE /internal/mysekai-birthday-monitors/:subscription_id?subscription_version=...
+```
+
+### Cloud -> Toolbox：读取暂存事件
+
+```http
+GET /internal/mysekai-birthday-events/:event_id?subscription_id=...&subscription_version=...
+```
+
+### Cloud -> Toolbox：ACK 暂存事件
+
+```http
+POST /internal/mysekai-birthday-events/:event_id/ack
+```
+
+请求：
 
 ```json
 {
-  "event_id": "..."
+  "subscription_id": "...",
+  "subscription_version": "..."
 }
 ```
 
@@ -263,32 +260,40 @@ POST /internal/events
 ```json
 {
   "subscription_id": "...",
+  "subscription_version": "...",
+  "event_id": "...",
+  "payload_ref": "...",
+  "empty_result": false
+}
+```
+
+### Client -> HMES：SSE
+
+```http
+GET /sse?subscription_id=...&subscription_version=...&token=...
+Accept: text/event-stream
+```
+
+事件：
+
+```json
+{
+  "subscription_id": "...",
+  "subscription_version": "...",
   "event_id": "...",
   "empty_result": false
 }
 ```
 
-### Client -> HMES：长轮询
+HMES 建立 SSE 前会向 Cloud 校验 `subscription_id + subscription_version + token`。
+
+### Cloud -> HMES：关闭 SSE 订阅连接
 
 ```http
-GET /poll?subscription_id=...&token=...
+POST /internal/subscriptions/:subscription_id/close?subscription_version=...
 ```
 
-响应：
-
-```json
-{
-  "events": [
-    {
-      "subscription_id": "...",
-      "event_id": "...",
-      "empty_result": false
-    }
-  ]
-}
-```
-
-HMES 每次 poll 都会向 Cloud 校验 token，并优先返回 Cloud 中未 ACK 的事件，因此 HMES 重启不会丢失已写入 Cloud 的订阅事件。
+HMES 会清理该 `subscription_id + subscription_version` 的 pending event，并主动关闭在线 SSE 连接。
 
 ### Client -> Cloud：事件绘图
 
@@ -305,6 +310,7 @@ POST /api/v2/bot/:botId/pjsk/mysekai/birthday-monitor/render
   "platform_group_id": "456",
   "self_id": "789",
   "subscription_id": "...",
+  "subscription_version": "...",
   "token": "...",
   "event_id": "..."
 }
@@ -387,5 +393,5 @@ Cloud 新增订阅相关表。
 - `HMES_CLOUD_INTERNAL_BASE_URL`：Cloud 内网地址，必填。
 - `HMES_CLOUD_INTERNAL_TOKEN`：Cloud internal API token。
 - `HMES_USER_AGENT`：默认 `Haruki-HMES`。
-- `HMES_POLL_TIMEOUT_SECONDS`：单次长轮询最长等待时间，默认 25 秒。
+- `HMES_SSE_HEARTBEAT_SECONDS`：SSE heartbeat 间隔，默认 15 秒。
 - `HMES_CLOUD_TIMEOUT_SECONDS`：HMES 调 Cloud 的超时，默认 5 秒。
