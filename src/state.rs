@@ -64,6 +64,9 @@ pub struct ClientHandle {
 
 impl AppState {
     pub fn new(cfg: Config) -> Self {
+        // Install ring as the default rustls crypto provider.
+        // Silently ignore "already installed" errors (e.g. in tests).
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let http = reqwest::Client::builder()
             .timeout(cfg.cloud_http_timeout)
             .user_agent(cfg.user_agent.clone())

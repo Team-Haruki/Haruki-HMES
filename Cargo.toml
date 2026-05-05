@@ -10,7 +10,8 @@ axum = { version = "0.8", features = ["macros"] }
 tower = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "query"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider", "query"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
@@ -23,7 +24,7 @@ enable-ansi-support = "0.3"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "test-util"] }
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider", "stream"] }
 futures-util = "0.3"
 
 [profile.release]
