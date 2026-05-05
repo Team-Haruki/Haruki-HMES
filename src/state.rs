@@ -67,6 +67,7 @@ impl AppState {
         let http = reqwest::Client::builder()
             .timeout(cfg.cloud_http_timeout)
             .user_agent(cfg.user_agent.clone())
+            .danger_accept_invalid_certs(cfg.cloud_tls_skip_verify)
             .build()
             .expect("build reqwest client");
         Self {

@@ -6,12 +6,7 @@ RUN apk add --no-cache musl-dev
 
 WORKDIR /build
 
-# Cache dependencies before copying source
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo 'fn main(){}' > src/main.rs && echo '' > src/lib.rs \
-    && cargo build --release \
-    && rm -rf src target/release/haruki-hmes target/release/deps/haruki_hmes*
-
 COPY src ./src
 RUN cargo build --release
 
