@@ -6,10 +6,12 @@ HMES 被定位为外挂式轻量推送网关，而不是订阅业务的事实来
 
 ## 当前联调状态
 
-截至 2026-05-05，烤森生日材料监听链路已完成实机联调：
+截至 2026-05-06，烤森生日材料监听链路已完成实机联调：
 
 - Toolbox 上传、过滤和回调已确认工作正常。
+- Toolbox 在 HMES 未配置或不可用时不会提交推送，上传链路保持可降级。
 - HMES 通知桥已确认工作正常，鉴权和通知均正常。
+- HMES 已完成 Rust 重写并确认正常运行。
 - Cloud 读取过滤地图并调用画图逻辑已确认正常。
 - Client 注册、取消注册、收到通知后获取地图已确认正常。
 
@@ -72,7 +74,7 @@ Cloud 必须在创建订阅时校验账号已验证，并解析最终的 `region
 
 ## 命令设计
 
-监听命令不进入 Cloud manifest，必须由新版 Client 硬编码识别并调用专用 Cloud API。
+监听命令会进入 Cloud manifest，指向专用 Cloud API。Client 当前仍保留本地特殊识别路径，用于兼容未同步 manifest 的环境，并在注册订阅时注入本地配置项。
 
 监听命令：
 
@@ -110,7 +112,7 @@ Cloud 必须在创建订阅时校验账号已验证，并解析最终的 `region
 ### 1. 创建或更新订阅
 
 1. 用户在群里发送监听命令。
-2. Client 识别该命令为本地特殊命令，不走 manifest。
+2. Client 通过本地特殊识别或 Cloud manifest 匹配该命令。
 3. Client 调 Cloud 专用订阅 API，并携带 `self_id`、群、用户、原始参数。
 4. Cloud 校验：
    - 请求来自已认证 Bot Client。
@@ -182,7 +184,8 @@ POST /api/v2/bot/:botId/pjsk/mysekai/birthday-monitor
   "platform_user_id": "123",
   "platform_group_id": "456",
   "self_id": "789",
-  "message": "/烤森生日监听 90 钻石"
+  "message": "/烤森生日监听 90 钻石",
+  "notify_empty": false
 }
 ```
 
@@ -208,7 +211,7 @@ POST /api/v2/bot/:botId/pjsk/mysekai/birthday-monitor
 }
 ```
 
-`client_actions` 只用于新版 Client，本命令不通过 manifest 下发。
+`client_actions` 只用于新版 Client；manifest 只负责暴露命令入口，实际协议仍使用该专用 API。
 
 ### Cloud -> Toolbox：同步监听镜像
 
@@ -390,7 +393,7 @@ Cloud 新增订阅相关表。
 2. Cloud 绘图 API 只接受已认证 Client 调用，且要校验 `event_id` 属于当前 Bot/群/用户/self_id 对应订阅。
 3. Client 更换 `self_id` 后，旧订阅不自动迁移。
 4. Client 主动发群消息时必须使用订阅 action 捕获的 `platform_group_id` 和 `self_id`；运行中更换 OneBot 账号时旧订阅不自动迁移。
-5. 空结果也必须通知用户，固定文案为：`本次生日材料更新未发现你订阅的材料。`
+5. 空结果通知由 Client 配置决定；开启时固定文案为：`本次生日材料更新未发现你订阅的材料。`
 6. Drawing 端无需修改。
 
 ## 当前 HMES 环境变量
@@ -401,6 +404,7 @@ Cloud 新增订阅相关表。
 - `HMES_INTERNAL_TOKEN`：Toolbox 调 `/internal/events` 的可选 token。
 - `HMES_CLOUD_INTERNAL_BASE_URL`：Cloud 内网地址，必填。
 - `HMES_CLOUD_INTERNAL_TOKEN`：Cloud internal API token。
+- `HMES_CLOUD_TLS_SKIP_VERIFY`：是否跳过 Cloud TLS 证书校验，默认关闭，仅用于受控内网或测试环境。
 - `HMES_USER_AGENT`：默认 `Haruki-HMES`。
 - `HMES_SSE_HEARTBEAT_SECONDS`：SSE heartbeat 间隔，默认 15 秒。
 - `HMES_CLOUD_TIMEOUT_SECONDS`：HMES 调 Cloud 的超时，默认 5 秒。

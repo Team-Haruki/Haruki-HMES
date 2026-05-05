@@ -82,6 +82,7 @@ cargo build --locked --release
 | `HMES_INTERNAL_TOKEN` | — | Bearer token for `/internal/*` routes |
 | `HMES_CLOUD_INTERNAL_BASE_URL` | — | Cloud base URL for validation |
 | `HMES_CLOUD_INTERNAL_TOKEN` | — | Bearer token sent to Cloud |
+| `HMES_CLOUD_TLS_SKIP_VERIFY` | `false` | Skip Cloud TLS verification for controlled internal/test environments |
 | `HMES_USER_AGENT` | `Haruki-HMES` | User-Agent header for Cloud requests |
 | `HMES_SSE_HEARTBEAT_SECONDS` | `15` | SSE keep-alive comment interval |
 | `HMES_CLOUD_TIMEOUT_SECONDS` | `5` | Timeout for Cloud HTTP calls |

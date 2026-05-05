@@ -81,10 +81,10 @@
 ## 阶段 6：测试和降级验证
 
 - [x] Cloud 命令解析单元测试。
-- [ ] Cloud 订阅覆盖、过期、取消测试。
+- [x] Cloud 订阅覆盖、过期、取消测试。
 - [ ] Cloud 权限校验测试：默认账号、`u[i]`、非本人账号、未验证账号。
 - [x] Toolbox 过滤规则单元测试。
-- [ ] Toolbox 在 HMES 不可用时上传不失败的测试。
+- [x] Toolbox 在 HMES 不可用时上传不失败的测试。
 - [x] HMES SSE 鉴权和推送测试。
 - [x] Client 特殊命令和 `client_actions` 测试。
 - [x] Toolbox 实机验证：上传、过滤和回调正常。
@@ -95,4 +95,4 @@
 
 ## 后续优化
 
-- [ ] 评估并实施 HMES Rust 重写，保持现有 HTTP/SSE 接口和环境变量兼容。
+- [x] 评估并实施 HMES Rust 重写，保持现有 HTTP/SSE 接口和环境变量兼容。
