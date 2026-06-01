@@ -5,7 +5,9 @@ use std::time::Duration;
 use axum::routing::{get, post};
 use axum::Router;
 use futures_util::StreamExt;
-use haruki_hmes::{handlers, state::AppState, state::Event, state::subscription_key, config::Config};
+use haruki_hmes::{
+    config::Config, handlers, state::subscription_key, state::AppState, state::Event,
+};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -49,7 +51,10 @@ impl TestApp {
 
 async fn start_cloud<F>(handler: F) -> (SocketAddr, JoinHandle<()>)
 where
-    F: Fn(axum::http::HeaderMap, axum::extract::Query<std::collections::HashMap<String, String>>) -> axum::response::Response
+    F: Fn(
+            axum::http::HeaderMap,
+            axum::extract::Query<std::collections::HashMap<String, String>>,
+        ) -> axum::response::Response
         + Clone
         + Send
         + Sync
@@ -149,7 +154,10 @@ async fn sse_returns_pending_events_from_cloud() {
         Duration::from_secs(2),
     )
     .await;
-    assert!(body.contains("event: birthday_monitor_update"), "body: {body}");
+    assert!(
+        body.contains("event: birthday_monitor_update"),
+        "body: {body}"
+    );
     assert!(body.contains("\"event_id\":\"9\""), "body: {body}");
     assert!(body.contains("\"empty_result\":true"), "body: {body}");
     assert!(
@@ -210,9 +218,15 @@ async fn sse_returns_latest_local_event() {
         Duration::from_secs(2),
     )
     .await;
-    assert!(body.contains("event: birthday_monitor_update"), "body: {body}");
+    assert!(
+        body.contains("event: birthday_monitor_update"),
+        "body: {body}"
+    );
     assert!(body.contains("\"event_id\":\"latest\""), "body: {body}");
-    assert!(body.contains("\"payload_ref\":\"redis-key\""), "body: {body}");
+    assert!(
+        body.contains("\"payload_ref\":\"redis-key\""),
+        "body: {body}"
+    );
     assert!(
         !body.contains("\"event_id\":\"first\""),
         "should only emit latest, body: {body}"
@@ -288,10 +302,17 @@ async fn close_subscription_requires_token_and_closes_clients() {
 
     // Receiver should observe close: either sender dropped, or sentinel None.
     let mut rx = handle.rx;
-    let result = timeout(Duration::from_secs(1), rx.changed()).await.expect("rx.changed should resolve");
+    let result = timeout(Duration::from_secs(1), rx.changed())
+        .await
+        .expect("rx.changed should resolve");
     if result.is_ok() {
-        assert!(rx.borrow().is_none(), "should not deliver buffered pending event");
-        let next = timeout(Duration::from_secs(1), rx.changed()).await.expect("rx.changed should resolve");
+        assert!(
+            rx.borrow().is_none(),
+            "should not deliver buffered pending event"
+        );
+        let next = timeout(Duration::from_secs(1), rx.changed())
+            .await
+            .expect("rx.changed should resolve");
         assert!(next.is_err(), "channel should be closed after sentinel");
     }
     assert!(app.state.pop_latest(&key).is_none());
