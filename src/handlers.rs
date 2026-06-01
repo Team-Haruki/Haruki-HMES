@@ -57,29 +57,25 @@ pub async fn sse(
             .into_response();
     }
 
-    let validation = match cloud::validate_with_cloud(
-        &state,
-        &subscription_id,
-        &subscription_version,
-        &token,
-    )
-    .await
-    {
-        Ok(v) => v,
-        Err(err) => {
-            tracing::error!(
-                subscription = %subscription_id,
-                version = %subscription_version,
-                error = %err,
-                "cloud validation failed"
-            );
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({ "error": "cloud validation failed" })),
-            )
-                .into_response();
-        }
-    };
+    let validation =
+        match cloud::validate_with_cloud(&state, &subscription_id, &subscription_version, &token)
+            .await
+        {
+            Ok(v) => v,
+            Err(err) => {
+                tracing::error!(
+                    subscription = %subscription_id,
+                    version = %subscription_version,
+                    error = %err,
+                    "cloud validation failed"
+                );
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({ "error": "cloud validation failed" })),
+                )
+                    .into_response();
+            }
+        };
     if !validation.valid {
         tracing::warn!(
             subscription = %subscription_id,
@@ -94,7 +90,11 @@ pub async fn sse(
     }
 
     let key = subscription_key(&subscription_id, &subscription_version);
-    let pending = normalize_events(validation.pending_events, &subscription_id, &subscription_version);
+    let pending = normalize_events(
+        validation.pending_events,
+        &subscription_id,
+        &subscription_version,
+    );
     if !pending.is_empty() {
         state.clear_latest(&key);
     }
@@ -174,7 +174,11 @@ fn make_sse_event(event: &Event) -> SseEvent {
     SseEvent::default()
         .event("birthday_monitor_update")
         .json_data(event)
-        .unwrap_or_else(|_| SseEvent::default().event("birthday_monitor_update").data(""))
+        .unwrap_or_else(|_| {
+            SseEvent::default()
+                .event("birthday_monitor_update")
+                .data("")
+        })
 }
 
 fn normalize_events(

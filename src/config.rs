@@ -19,7 +19,11 @@ impl Config {
         let port = env_u64("HMES_PORT", 7910);
         let addr = match env_string("HMES_ADDR", "").as_str() {
             "" => {
-                let host = if host.is_empty() { "0.0.0.0".to_string() } else { host };
+                let host = if host.is_empty() {
+                    "0.0.0.0".to_string()
+                } else {
+                    host
+                };
                 format!("{host}:{port}")
             }
             other => other.to_string(),
@@ -54,11 +58,19 @@ fn env_string(key: &str, fallback: &str) -> String {
 
 fn env_u64(key: &str, fallback: u64) -> u64 {
     match env::var(key) {
-        Ok(v) => v.trim().parse::<u64>().ok().filter(|n| *n > 0).unwrap_or(fallback),
+        Ok(v) => v
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .filter(|n| *n > 0)
+            .unwrap_or(fallback),
         Err(_) => fallback,
     }
 }
 
 fn env_bool(key: &str) -> bool {
-    matches!(env::var(key).as_deref().map(str::trim), Ok("true") | Ok("1") | Ok("yes"))
+    matches!(
+        env::var(key).as_deref().map(str::trim),
+        Ok("true") | Ok("1") | Ok("yes")
+    )
 }
