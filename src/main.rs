@@ -11,7 +11,10 @@ use haruki_hmes::{config::Config, handlers, logging, state::AppState};
 async fn main() -> anyhow::Result<()> {
     enable_ansi();
     logging::init();
-    tracing::info!("===== Haruki HMES v{} =====", env!("CARGO_PKG_VERSION"));
+    tracing::info!(
+        "========================= Haruki HMES v{} =========================",
+        env!("CARGO_PKG_VERSION")
+    );
     tracing::info!("Powered by Haruki Dev Team");
 
     let cfg = Config::from_env();
