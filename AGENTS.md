@@ -24,7 +24,7 @@ commands still succeed.
 
 ```
 src/
-  main.rs      — entry point, router, graceful shutdown
+  main.rs      — entry point, router, graceful shutdown, Windows ANSI init
   lib.rs       — re-exports all modules (needed for integration tests)
   config.rs    — Config::from_env(), all HMES_* env vars
   state.rs     — AppState, Event, subscription_key, bearer_auth
@@ -35,9 +35,11 @@ tests/
   integration.rs — full HTTP integration tests (spin up real axum server)
 .github/
   workflows/
-    ci.yml      — check + clippy + test on push/PR to main
-    release.yml — cross-compile release binaries on v* tags
-    docker.yml  — build & push multi-arch Alpine image on v* tags
+    ci.yml      — fmt + check + clippy + test on main pushes, PRs, manual dispatch
+    release.yml — build release binaries (linux-x64, macos-arm64, windows-x64)
+                  on v* tags and manual dispatch
+    docker.yml  — build Alpine image; push to GHCR on main pushes and v* tags,
+                  build-only on PRs
 Dockerfile      — two-stage: rust:alpine builder → alpine:3.21 runtime
 ```
 
@@ -129,7 +131,7 @@ Rules:
 - No trailing period.
 - Keep the subject at or below roughly 70 characters.
 - **Agent attribution uses the standard Git `Co-authored-by:` trailer in the commit body, not a free-form `Agent:` line.** This makes GitHub render the co-author avatar on the commit page. The trailer must be on its own line, separated from the subject by a blank line, in the form `Co-authored-by: <Display Name> <email>`. Suggested values per agent:
-  - Claude (any 4.x): `Co-authored-by: Claude Opus 4.7 <noreply@anthropic.com>` (substitute the actual model, e.g. `Claude Sonnet 4.6`, `Claude Haiku 4.5`)
+  - Claude (any model): `Co-authored-by: Claude Fable 5 <noreply@anthropic.com>` (substitute the actual model, e.g. `Claude Opus 4.7`, `Claude Sonnet 4.6`, `Claude Haiku 4.5`)
   - Codex: `Co-authored-by: Codex <noreply@openai.com>`
   - Copilot: `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`
 
