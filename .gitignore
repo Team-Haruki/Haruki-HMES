@@ -1,0 +1,8 @@
+# Local key files — never commit
+git_sign
+git_sign.pub
+sshkey
+sshkey.pub
+
+# macOS
+.DS_Store
