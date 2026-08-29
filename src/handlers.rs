@@ -8,7 +8,9 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::IntoResponse;
+use axum::routing::{get, post};
 use axum::Json;
+use axum::Router;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -16,6 +18,18 @@ use crate::cloud;
 use crate::state::{subscription_key, AppState, Event};
 
 type SharedState = Arc<AppState>;
+
+pub fn router(state: Arc<AppState>) -> Router {
+    Router::new()
+        .route("/healthz", get(healthz))
+        .route("/sse", get(sse))
+        .route("/internal/events", post(internal_event))
+        .route(
+            "/internal/subscriptions/{subscription_id}/close",
+            post(close_subscription),
+        )
+        .with_state(state)
+}
 
 pub async fn healthz() -> impl IntoResponse {
     (StatusCode::OK, Json(json!({ "status": "ok" })))

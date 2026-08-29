@@ -212,3 +212,160 @@ fn component_color(component: &str) -> &'static str {
         _ => COLOR_BRIGHT_CYAN,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+
+    use tracing_subscriber::fmt::MakeWriter;
+
+    use super::*;
+
+    #[derive(Clone, Default)]
+    struct Buffer(Arc<Mutex<Vec<u8>>>);
+
+    struct BufferWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for BufferWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for Buffer {
+        type Writer = BufferWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            BufferWriter(self.0.clone())
+        }
+    }
+
+    impl Buffer {
+        fn contents(&self) -> String {
+            String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+        }
+    }
+
+    #[test]
+    fn formatter_records_identity_and_typed_fields() {
+        let output = Buffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .event_format(ColoredFormatter)
+            .with_max_level(Level::TRACE)
+            .with_writer(output.clone())
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(
+                target: "haruki_hmes::handlers",
+                region = "jp",
+                user_id = 42_u64,
+                active = true,
+                delta = -2_i64,
+                details = ?vec![1, 2],
+                log_message = "extra",
+                "connected"
+            );
+            tracing::trace!(target: "haruki_hmes", "trace event");
+            tracing::debug!(target: "haruki_hmes::cloud", "debug event");
+            tracing::warn!(target: "haruki_hmes::state", "warn event");
+            tracing::error!(target: "external", "error event");
+        });
+
+        let rendered = output.contents();
+        assert!(rendered.contains("INFO"), "{rendered:?}");
+        assert!(rendered.contains("http"), "{rendered:?}");
+        assert!(rendered.contains("JP"), "{rendered:?}");
+        assert!(rendered.contains("User-42"), "{rendered:?}");
+        assert!(rendered.contains("connected"), "{rendered:?}");
+        assert!(rendered.contains("active=true"), "{rendered:?}");
+        assert!(rendered.contains("delta=-2"), "{rendered:?}");
+        assert!(rendered.contains("details=[1, 2]"), "{rendered:?}");
+        assert!(rendered.contains("message=extra"), "{rendered:?}");
+        assert!(rendered.contains("TRACE"), "{rendered:?}");
+        assert!(rendered.contains("DEBUG"), "{rendered:?}");
+        assert!(rendered.contains("WARNING"), "{rendered:?}");
+        assert!(rendered.contains("ERROR"), "{rendered:?}");
+    }
+
+    #[test]
+    fn normalizes_regions_levels_and_components() {
+        for (input, expected) in [
+            ("Jp", "JP"),
+            ("en", "EN"),
+            ("Tw", "TW"),
+            ("kr", "KR"),
+            ("Cn", "CN"),
+            ("\"custom\"", "CUSTOM"),
+        ] {
+            assert_eq!(normalize_region(input), expected);
+        }
+        assert_eq!(trim_debug_quotes(" \"42\" "), "42");
+
+        for (level, name, color) in [
+            (Level::TRACE, "TRACE", COLOR_MAGENTA),
+            (Level::DEBUG, "DEBUG", COLOR_BLUE),
+            (Level::INFO, "INFO", COLOR_GREEN),
+            (Level::WARN, "WARNING", COLOR_DARK_ORANGE),
+            (Level::ERROR, "ERROR", COLOR_RED),
+        ] {
+            assert_eq!(level_name(&level), name);
+            assert_eq!(level_color(&level), color);
+        }
+
+        for (target, expected) in [
+            ("haruki_hmes", "main"),
+            ("haruki_hmes::handlers", "http"),
+            ("haruki_hmes::cloud", "cloud"),
+            ("haruki_hmes::state", "state"),
+            ("haruki_hmes::config", "config"),
+            ("haruki_hmes::worker", "worker"),
+            ("external::worker", "external"),
+            ("", ""),
+        ] {
+            assert_eq!(component_name(target), expected);
+        }
+
+        for (component, expected) in [
+            ("main", COLOR_BRIGHT_CYAN),
+            ("http", COLOR_GREEN),
+            ("handlers", COLOR_GREEN),
+            ("cloud", COLOR_MAGENTA),
+            ("state", COLOR_CYAN),
+            ("config", COLOR_BRIGHT_MAGENTA),
+            ("sse", COLOR_BRIGHT_BLUE),
+            ("worker", COLOR_BRIGHT_CYAN),
+        ] {
+            assert_eq!(component_color(component), expected);
+        }
+    }
+
+    #[test]
+    fn identity_tags_support_empty_and_partial_values() {
+        assert_eq!(EventVisitor::default().identity_tags(), "");
+
+        let region_only = EventVisitor {
+            region: Some("EN".to_string()),
+            ..Default::default()
+        };
+        assert!(region_only.identity_tags().contains("EN"));
+
+        let user_only = EventVisitor {
+            user_id: Some("7".to_string()),
+            ..Default::default()
+        };
+        assert!(user_only.identity_tags().contains("User-7"));
+    }
+
+    #[test]
+    fn init_can_be_called_more_than_once() {
+        init();
+        init();
+    }
+}

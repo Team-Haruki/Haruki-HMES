@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use axum::routing::{get, post};
-use axum::Router;
 use tokio::net::TcpListener;
 use tokio::signal;
 
@@ -21,15 +19,7 @@ async fn main() -> anyhow::Result<()> {
     let addr = cfg.addr.clone();
     let state = Arc::new(AppState::new(cfg));
 
-    let app = Router::new()
-        .route("/healthz", get(handlers::healthz))
-        .route("/sse", get(handlers::sse))
-        .route("/internal/events", post(handlers::internal_event))
-        .route(
-            "/internal/subscriptions/{subscription_id}/close",
-            post(handlers::close_subscription),
-        )
-        .with_state(state);
+    let app = handlers::router(state);
 
     let listener = TcpListener::bind(&addr).await?;
     tracing::info!(addr = %addr, "HMES listening");

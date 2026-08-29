@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::routing::{get, post};
+use axum::routing::get;
 use axum::Router;
 use futures_util::StreamExt;
 use haruki_hmes::{
@@ -22,15 +22,7 @@ struct TestApp {
 impl TestApp {
     async fn start(cfg: Config) -> Self {
         let state = Arc::new(AppState::new(cfg));
-        let app = Router::new()
-            .route("/healthz", get(handlers::healthz))
-            .route("/sse", get(handlers::sse))
-            .route("/internal/events", post(handlers::internal_event))
-            .route(
-                "/internal/subscriptions/{subscription_id}/close",
-                post(handlers::close_subscription),
-            )
-            .with_state(state.clone());
+        let app = handlers::router(state.clone());
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -117,8 +109,8 @@ async fn sse_returns_pending_events_from_cloud() {
             "subscription_version": "v1",
             "pending_events": [{
                 "event_id": "9",
-                "subscription_id": "1",
-                "subscription_version": "v1",
+                "subscription_id": "",
+                "subscription_version": "",
                 "empty_result": true,
             }]
         });
@@ -130,7 +122,7 @@ async fn sse_returns_pending_events_from_cloud() {
     cfg.cloud_base_url = format!("http://{}", cloud_addr);
     cfg.cloud_token = "cloud-token".to_string();
     cfg.user_agent = "test".to_string();
-    cfg.sse_heartbeat_interval = Duration::from_secs(3600);
+    cfg.sse_heartbeat_interval = Duration::ZERO;
     cfg.cloud_http_timeout = Duration::from_secs(1);
     cfg.internal_token = String::new();
 
@@ -316,4 +308,147 @@ async fn close_subscription_requires_token_and_closes_clients() {
         assert!(next.is_err(), "channel should be closed after sentinel");
     }
     assert!(app.state.pop_latest(&key).is_none());
+}
+
+#[tokio::test]
+async fn health_and_sse_reject_invalid_requests() {
+    let mut cfg = Config::from_env();
+    cfg.cloud_base_url = String::new();
+    cfg.internal_token = String::new();
+    let app = TestApp::start(cfg).await;
+    let client = reqwest::Client::new();
+
+    let resp = client.get(app.url("/healthz")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "ok");
+
+    let resp = client
+        .get(app.url("/sse?subscription_id=1&subscription_version=v1"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    let resp = client
+        .get(app.url("/sse?subscription_id=1&version=v1&token=token"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
+}
+
+#[tokio::test]
+async fn sse_rejects_cloud_validation_denial() {
+    let (cloud_addr, _cloud) = start_cloud(|_headers, query| {
+        assert_eq!(query.get("subscription_id").map(String::as_str), Some("1"));
+        assert_eq!(
+            query.get("subscription_version").map(String::as_str),
+            Some("v1")
+        );
+        axum::response::Json(json!({ "valid": false })).into_response()
+    })
+    .await;
+
+    let mut cfg = Config::from_env();
+    cfg.cloud_base_url = format!("http://{cloud_addr}");
+    cfg.internal_token = String::new();
+    let app = TestApp::start(cfg).await;
+
+    let resp = reqwest::Client::new()
+        .get(app.url("/sse?subscription_id=1&version=v1&token=invalid"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn internal_event_rejects_invalid_payloads_and_trims_fields() {
+    let mut cfg = Config::from_env();
+    cfg.internal_token = "secret".to_string();
+    cfg.cloud_base_url = String::new();
+    let app = TestApp::start(cfg).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(app.url("/internal/events"))
+        .header("Authorization", "secret")
+        .body("not-json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    let resp = client
+        .post(app.url("/internal/events"))
+        .header("Authorization", "secret")
+        .body(r#"{"event_id":" ","subscription_id":"2","subscription_version":"v2"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    let resp = client
+        .post(app.url("/internal/events"))
+        .header("Authorization", "secret")
+        .body(
+            r#"{"event_id":" 12 ","subscription_id":" 2 ","subscription_version":" v2 ","payload_ref":" ref "}"#,
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let event = app
+        .state
+        .pop_latest(&subscription_key("2", "v2"))
+        .expect("trimmed event");
+    assert_eq!(event.event_id, "12");
+    assert_eq!(event.payload_ref, "ref");
+}
+
+#[tokio::test]
+async fn close_subscription_accepts_body_and_rejects_bad_inputs() {
+    let mut cfg = Config::from_env();
+    cfg.internal_token = "secret".to_string();
+    cfg.cloud_base_url = String::new();
+    let app = TestApp::start(cfg).await;
+    let client = reqwest::Client::new();
+    let url = app.url("/internal/subscriptions/2/close");
+
+    let resp = client
+        .post(&url)
+        .header("Authorization", "Bearer secret")
+        .body("not-json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    let resp = client
+        .post(&url)
+        .header("Authorization", "Bearer secret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    let resp = client
+        .post(&url)
+        .header("Authorization", "Bearer secret")
+        .body(r#"{"subscription_version":" v2 "}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["closed_clients"], 0);
+
+    let resp = client
+        .post(format!("{url}?version=v3"))
+        .header("Authorization", "Bearer secret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
 }
