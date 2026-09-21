@@ -56,7 +56,11 @@ Dockerfile      — two-stage: rust:alpine builder → alpine:3.21 runtime
 4. **Close sentinel.** `close_subscription` sends `None` through each
    client's watch channel, causing the SSE stream to exit cleanly.
 5. **No persistent storage.** HMES holds everything in memory; a restart
-   is safe as long as Cloud keeps pending-event data.
+   is safe as long as Cloud keeps pending-event data. Never add a database
+   or any file-system persistence.
+6. **Frozen external contract.** HTTP route paths and JSON field names are
+   consumed by Cloud, Toolbox and Client — do not rename or move them.
+7. **rustls only.** Never pull in `native-tls`.
 
 ## Commands
 
@@ -73,6 +77,24 @@ cargo test --locked
 # Release build
 cargo build --locked --release
 ```
+
+Run the clippy and test commands after every change; both must pass with
+zero warnings before committing.
+
+## Code Conventions
+
+- Use `tracing::{info, warn, error}` macros — never `println!` or `eprintln!`.
+- Structured fields: `tracing::info!(key = %value, "message")`.
+- Return `impl IntoResponse` from handlers; use `axum::Json(json!({...}))` for
+  JSON bodies.
+- Prefer `anyhow::Result` in non-handler async functions; use explicit status
+  codes in handlers.
+- `AppState` is wrapped in `Arc<AppState>` everywhere — do not clone the inner
+  state.
+- Keep the `Mutex` lock scope as short as possible; never `.await` while
+  holding it.
+- All string fields from HTTP input must be `.trim()`-ed before use.
+- No `unwrap()` in non-test code except where a panic is truly impossible.
 
 ## Environment Variables
 
