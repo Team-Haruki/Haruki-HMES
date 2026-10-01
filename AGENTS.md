@@ -176,9 +176,14 @@ The files in `.github/workflows` are thin callers:
 
 - `ci.yml` (`CI`) runs on `main` pushes, pull requests targeting `main`, and manual
   dispatch: `rust-ci` (fmt, clippy `-D warnings`, tests under `cargo llvm-cov`) →
-  `sonar` (scans the uploaded coverage; skipped green on Dependabot/fork PRs) and
-  `docker` (PRs build only; `main` pushes `ghcr.io/team-haruki/haruki-hmes:main`,
-  `:sha-<full sha>` and `:sha-<7 chars>`), plus `actionlint`.
+  `sonar` (scans the uploaded coverage; skipped green on Dependabot/fork PRs), plus
+  `docker` and `actionlint`.
+- `docker` does not wait for the tests. PRs build only; on `main` it runs in parallel
+  with `rust-ci` and pushes the immutable `ghcr.io/team-haruki/haruki-hmes:sha-<full sha>`
+  and `:sha-<7 chars>` as soon as the build finishes. The `Docker tags` job
+  (`docker-retag.yml`, after `CI OK`) then moves `:main` to that digest without
+  rebuilding, so `:main` only follows commits whose `CI OK` passed and lags the `:sha-*`
+  tags until then.
 - The aggregate job **`CI OK`** is the only required status check.
 - `release.yml` (`Release`): bump the version in `Cargo.toml` in a PR → merge and wait
   for `CI OK` on `main` → push the tag `v<version>`. `release-gate` refuses a tag that
@@ -198,5 +203,7 @@ Workflow maintenance rules:
   (new `v1.x.y` tag), not worked around here.
 - Keep top-level `permissions: contents: read`; grant `packages: write` / `contents: write`
   only on the job that needs it.
+- Do not suppress `githubactions:S7637` (full-SHA pins) in `sonar-project.properties`: the
+  template's `sonar.yml` already ignores it for the `@v1` references.
 - Third-party actions in caller-side custom steps are pinned to a full commit SHA with a
   `# vX.Y.Z` comment; Dependabot (`github-actions`) updates them and the template refs.
