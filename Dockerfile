@@ -19,7 +19,7 @@ COPY src ./src
 RUN cargo build --release --locked
 
 # ── Runtime stage ────────────────────────────────────────────────────────────
-FROM alpine:3.21
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -S haruki \
