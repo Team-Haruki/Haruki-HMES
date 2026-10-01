@@ -1,11 +1,19 @@
-# ── Build stage ─────────────────────────────────────────────────────────────
-FROM rust:alpine AS builder
+# ── Build stages (cargo-chef: dependencies are cached in their own layer) ────
+FROM lukemathwalker/cargo-chef:0.1.78-rust-alpine AS chef
 
 # musl-dev provides the C headers & linker needed for musl targets
 RUN apk add --no-cache musl-dev
 
 WORKDIR /build
 
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /build/recipe.json recipe.json
+RUN cargo chef cook --release --locked --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 RUN cargo build --release --locked

@@ -76,17 +76,33 @@ Examples from this repo's history:
 
 ## GitHub Actions workflows
 
-Use the standardized workflow layout in `.github/workflows`:
+CI reuses the shared templates in
+[`seiunx-dev/ci-templates`](https://github.com/seiunx-dev/ci-templates) at `@v1`.
+The files in `.github/workflows` are thin callers:
 
-- `ci.yml` runs on `main` pushes, pull requests targeting `main`, and manual dispatch.
-- Rust CI order: `cargo fmt --all -- --check`, `cargo check --locked --all-targets`, `cargo clippy --locked --all-targets -- -D warnings`, then `cargo test --locked`.
-- `release.yml` is the standard release build entrypoint. It runs on `v*` tags and manual dispatch, builds release artifacts, uploads them with `actions/upload-artifact`, and publishes GitHub Release assets on tag pushes.
-- `docker.yml` is the standard Docker entrypoint. It runs on `main` pushes, `v*` tags, PRs that touch Docker/build inputs, and manual dispatch. PRs build only; non-PR runs push GHCR images with lowercase image names and Docker metadata tags.
+- `ci.yml` (`CI`) runs on `main` pushes, pull requests targeting `main`, and manual
+  dispatch: `rust-ci` (fmt, clippy `-D warnings`, tests under `cargo llvm-cov`) →
+  `sonar` (scans the uploaded coverage; skipped green on Dependabot/fork PRs) and
+  `docker` (PRs build only; `main` pushes `ghcr.io/team-haruki/haruki-hmes:main`,
+  `:sha-<full sha>` and `:sha-<7 chars>`), plus `actionlint`.
+- The aggregate job **`CI OK`** is the only required status check.
+- `release.yml` (`Release`): bump the version in `Cargo.toml` in a PR → merge and wait
+  for `CI OK` on `main` → push the tag `v<version>`. `release-gate` refuses a tag that
+  differs from `Cargo.toml` and waits for `CI OK` on the tagged commit; then the
+  binaries are built (tags only; five targets, assets
+  `haruki-hmes-v<version>-<target-triple>.tar.gz` / `.zip`), the `main` image
+  `:sha-<sha>` is promoted (re-tagged, not rebuilt) to `:<version>`, `:<major>.<minor>`
+  and `:latest`, and the GitHub Release is published with `SHA256SUMS-<tag>.txt`.
+  Manual dispatch is a dry run: it builds the binaries and publishes nothing.
 
 Workflow maintenance rules:
 
-- Keep workflow filenames and top-level names aligned: `CI`, `Release`, `Docker`, and optional package-specific names.
-- Use `actions/checkout@v6`, `actions/setup-go@v6`, `actions/upload-artifact@v7`, `actions/download-artifact@v8`, `softprops/action-gh-release@v3`, and current Docker actions (`setup-buildx@v4`, `login@v4`, `metadata@v6`, `build-push@v7`).
-- Keep `permissions` minimal: `contents: read` for CI/Docker build-only work, `contents: write` for release publishing, and `packages: write` only when pushing container images.
-- Use workflow `concurrency` keyed by workflow name and ref, with release jobs using `release-${{ github.ref_name }}` and `cancel-in-progress: false`.
-- Do not reintroduce legacy workflow names such as `rust-ci.yml`, `build.yml`, `release-build.yml`, `docker-build.yml`, or `docker-release.yml` unless a package-specific workflow already exists and is intentionally preserved.
+- Use the shared templates first. Add custom jobs or steps only when a template
+  genuinely cannot meet the project's needs, keep them in the thin caller files, and
+  add a comment explaining why.
+- Template bugs and missing features are fixed upstream in `seiunx-dev/ci-templates`
+  (new `v1.x.y` tag), not worked around here.
+- Keep top-level `permissions: contents: read`; grant `packages: write` / `contents: write`
+  only on the job that needs it.
+- Third-party actions in caller-side custom steps are pinned to a full commit SHA with a
+  `# vX.Y.Z` comment; Dependabot (`github-actions`) updates them and the template refs.
