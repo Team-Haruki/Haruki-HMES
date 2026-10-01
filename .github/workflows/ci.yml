@@ -33,13 +33,13 @@ jobs:
 
   docker:
     name: Docker
-    needs: [rust]
     permissions:
       contents: read
       packages: write
       pull-requests: read
     uses: seiunx-dev/ci-templates/.github/workflows/docker.yml@v1
     with:
+      defer-moving-tags: true # push :sha-* right away; :main moves after CI OK (docker-tags)
       cache-backend: registry
       cache-mode: max
 
@@ -56,3 +56,16 @@ jobs:
     steps:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: exit 1
+
+  docker-tags:
+    name: Docker tags # :main follows only commits whose CI OK passed
+    needs: [docker, ci-ok]
+    if: needs.docker.outputs.deferred-tags != ''
+    permissions:
+      contents: read
+      packages: write
+    uses: seiunx-dev/ci-templates/.github/workflows/docker-retag.yml@v1
+    with:
+      image: ${{ needs.docker.outputs.image }}
+      digest: ${{ needs.docker.outputs.digest }}
+      tags: ${{ needs.docker.outputs.deferred-tags }}
