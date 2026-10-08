@@ -18,18 +18,20 @@ commands still succeed.
 | HTTP client | reqwest 0.13 (rustls, no native TLS) |
 | Logging | tracing + custom `ColoredFormatter` in `logging.rs` |
 | Serialisation | serde\_json |
-| Error handling | anyhow (binary paths only) |
+| Error handling | anyhow (`main` and non-handler helpers such as `cloud.rs`) |
 
 ## Repository Layout
 
 ```
 src/
-  main.rs      — entry point, router, graceful shutdown, Windows ANSI init
-  lib.rs       — re-exports all modules (needed for integration tests)
+  main.rs      — entry point, graceful shutdown, Windows ANSI init; uses the
+                 library crate (`haruki_hmes::…`), declares no modules
+  lib.rs       — the only `pub mod` declarations (used by main.rs and tests)
   config.rs    — Config::from_env(), all HMES_* env vars
   state.rs     — AppState, Event, subscription_key, bearer_auth
   cloud.rs     — validate_with_cloud() — calls Cloud validation endpoint
-  handlers.rs  — axum handlers: healthz, sse, internal_event, close_subscription
+  handlers.rs  — `router()` plus axum handlers: healthz, sse, internal_event,
+                 close_subscription
   logging.rs   — tracing ColoredFormatter; call logging::init() once at startup
 tests/
   integration.rs — full HTTP integration tests (spin up real axum server)
@@ -39,13 +41,15 @@ tests/
                   + the `CI OK` aggregate check
     release.yml — Release: gate → binaries (5 targets) + Docker promote → GitHub
                   Release on v* tags; manual dispatch = dry run
-Dockerfile      — cargo-chef (rust:alpine) builder → alpine:3.21 runtime
+Dockerfile      — cargo-chef (rust:alpine) builder → alpine:3.24 runtime
 ```
 
 ## Key Design Rules
 
 1. **No mod.rs.** All source files are flat under `src/`. Add a new module
-   as `src/foo.rs` and declare it in both `src/lib.rs` and `src/main.rs`.
+   as `src/foo.rs` and declare it only in `src/lib.rs` (`pub mod foo;`).
+   `main.rs` reaches modules through the `haruki_hmes` library crate; a
+   second `mod foo;` there would compile the module twice.
 2. **Flat subscription state.** `AppState` uses a single `Mutex<Inner>` with
    a `HashMap<String, Subscription>`. Each subscription tracks one optional
    latest `Event` and a set of live SSE clients via `tokio::sync::watch`.
@@ -184,7 +188,10 @@ The files in `.github/workflows` are thin callers:
   (`docker-retag.yml`, after `CI OK`) then moves `:main` to that digest without
   rebuilding, so `:main` only follows commits whose `CI OK` passed and lags the `:sha-*`
   tags until then.
-- The aggregate job **`CI OK`** is the only required status check.
+- The aggregate job **`CI OK`** is the single gate: it fails if any job above failed or
+  was cancelled, `Docker tags` and the release gate wait for it, and it is the one check
+  to mark as required. `main` currently has no branch protection or ruleset, so GitHub
+  does not enforce it on merges.
 - `release.yml` (`Release`): bump the version in `Cargo.toml` in a PR → merge and wait
   for `CI OK` on `main` → push the tag `v<version>`. `release-gate` refuses a tag that
   differs from `Cargo.toml` and waits for `CI OK` on the tagged commit; then the

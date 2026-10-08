@@ -286,16 +286,19 @@ GET /sse?subscription_id=...&subscription_version=...&token=...
 Accept: text/event-stream
 ```
 
-事件：
+事件名为 `birthday_monitor_update`，`data` 为 JSON：
 
 ```json
 {
+  "event_id": "...",
   "subscription_id": "...",
   "subscription_version": "...",
-  "event_id": "...",
+  "payload_ref": "...",
   "empty_result": false
 }
 ```
+
+`payload_ref` 为空时不输出。连接建立后会先下发 Cloud 校验结果里的 `pending_events`，之后只推送最新事件；空闲时按 `HMES_SSE_HEARTBEAT_SECONDS`（默认 15 秒）发送 `heartbeat` 注释保活。
 
 HMES 建立 SSE 前会向 Cloud 校验 `subscription_id + subscription_version + token`。
 

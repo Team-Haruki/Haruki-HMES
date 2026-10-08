@@ -10,12 +10,12 @@ events out to connected clients. No database. Everything is in-memory.
 
 | File | Responsibility |
 |---|---|
-| `src/main.rs` | Tokio entry point, axum router, Windows ANSI colour init |
-| `src/lib.rs` | `pub mod` declarations (required for `tests/`) |
+| `src/main.rs` | Tokio entry point, graceful shutdown, Windows ANSI colour init |
+| `src/lib.rs` | The only `pub mod` declarations (used by `main.rs` and `tests/`) |
 | `src/config.rs` | `Config::from_env()` — all `HMES_*` env vars |
 | `src/state.rs` | `AppState`, `Event`, `subscription_key`, `bearer_auth` |
 | `src/cloud.rs` | `validate_with_cloud()` — async Cloud HTTP call |
-| `src/handlers.rs` | axum route handlers |
+| `src/handlers.rs` | `router()` and the axum route handlers |
 | `src/logging.rs` | Custom `tracing` formatter with ANSI colours |
 | `tests/integration.rs` | End-to-end HTTP tests against a live server |
 
@@ -35,7 +35,8 @@ cargo test --locked                                  # all tests must pass
   holding the `Mutex` lock.
 - **TLS:** `rustls` only — no `native-tls` dependency.
 - **Input:** always `.trim()` strings received from HTTP requests.
-- **No mod.rs:** new modules go in `src/foo.rs`; declare in `lib.rs` and `main.rs`.
+- **No mod.rs:** new modules go in `src/foo.rs`; declare them only in `lib.rs`
+  (`main.rs` uses the `haruki_hmes` library crate).
 
 ## Git commits
 
@@ -61,7 +62,7 @@ Rules:
 - No trailing period.
 - Keep the subject at or below roughly 70 characters.
 - **Agent attribution uses the standard Git `Co-authored-by:` trailer in the commit body, not a free-form `Agent:` line.** This makes GitHub render the co-author avatar on the commit page. The trailer must be on its own line, separated from the subject by a blank line, in the form `Co-authored-by: <Display Name> <email>`. Suggested values per agent:
-  - Claude (any 4.x): `Co-authored-by: Claude Opus 4.7 <noreply@anthropic.com>` (substitute the actual model, e.g. `Claude Sonnet 4.6`, `Claude Haiku 4.5`)
+  - Claude (any model): `Co-authored-by: Claude Fable 5 <noreply@anthropic.com>` (substitute the actual model, e.g. `Claude Opus 4.7`, `Claude Sonnet 4.6`, `Claude Haiku 4.5`)
   - Codex: `Co-authored-by: Codex <noreply@openai.com>`
   - Copilot: `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`
 
@@ -82,10 +83,18 @@ The files in `.github/workflows` are thin callers:
 
 - `ci.yml` (`CI`) runs on `main` pushes, pull requests targeting `main`, and manual
   dispatch: `rust-ci` (fmt, clippy `-D warnings`, tests under `cargo llvm-cov`) →
-  `sonar` (scans the uploaded coverage; skipped green on Dependabot/fork PRs) and
-  `docker` (PRs build only; `main` pushes `ghcr.io/team-haruki/haruki-hmes:main`,
-  `:sha-<full sha>` and `:sha-<7 chars>`), plus `actionlint`.
-- The aggregate job **`CI OK`** is the only required status check.
+  `sonar` (scans the uploaded coverage; skipped green on Dependabot/fork PRs), plus
+  `docker` and `actionlint`.
+- `docker` does not wait for the tests. PRs build only; on `main` it runs in parallel
+  with `rust-ci` and pushes the immutable `ghcr.io/team-haruki/haruki-hmes:sha-<full sha>`
+  and `:sha-<7 chars>` as soon as the build finishes. The `Docker tags` job
+  (`docker-retag.yml`, after `CI OK`) then moves `:main` to that digest without
+  rebuilding, so `:main` only follows commits whose `CI OK` passed and lags the `:sha-*`
+  tags until then.
+- The aggregate job **`CI OK`** is the single gate: it fails if any job above failed or
+  was cancelled, `Docker tags` and the release gate wait for it, and it is the one check
+  to mark as required. `main` currently has no branch protection or ruleset, so GitHub
+  does not enforce it on merges.
 - `release.yml` (`Release`): bump the version in `Cargo.toml` in a PR → merge and wait
   for `CI OK` on `main` → push the tag `v<version>`. `release-gate` refuses a tag that
   differs from `Cargo.toml` and waits for `CI OK` on the tagged commit; then the
