@@ -1,5 +1,7 @@
 # Haruki-HMES
 
+> **已退役（2026-10-11）**：本仓库已归档，功能由 Haruki-Cloud 的 events 角色接替。
+
 本项目用于处理 HarukiBot 的实时订阅消息。当前阶段只服务一个场景：烤森生日材料更新监听。
 
 HMES 被定位为外挂式轻量推送网关，而不是订阅业务的事实来源。HMES 停机时不能影响 Cloud、Toolbox、普通 Bot 指令、用户上传和绘图服务；最多导致订阅消息无法实时送达。订阅事实由 Cloud 负责，过滤后的短期事件 payload 由 Toolbox Redis 暂存，HMES 只负责 Client SSE 认证、在线连接和事件转发。
